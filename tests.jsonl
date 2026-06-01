@@ -1,0 +1,5 @@
+{"question": "What methods do LLM agents use for tool selection and when do they fail?"}
+{"question": "How do ReAct and Reflexion differ in multi-step reasoning performance?"}
+{"question": "What evaluation metrics are most commonly used to benchmark LLM tool use?"}
+{"question": "Which papers propose new architectures for multi-agent coordination?"}
+{"question": "How do LLM agents handle ambiguous or underspecified tool arguments?"}
