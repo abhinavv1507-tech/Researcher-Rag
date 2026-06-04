@@ -4,6 +4,9 @@ groq>=0.9.0
 langchain-groq>=0.2.0
 langchain-google-genai>=2.0.0
 google-generativeai>=0.8.0
+# sentence-transformers provides both SentenceTransformer (embeddings) and
+# CrossEncoder (reranker: cross-encoder/ms-marco-MiniLM-L-6-v2  ~80 MB).
+# Previously used BAAI/bge-reranker-base (~1.11 GB) — replaced for speed/RAM.
 sentence-transformers>=3.0.0
 transformers>=4.44.0
 accelerate>=0.33.0
@@ -18,3 +21,9 @@ tenacity>=8.5.0
 python-dotenv>=1.0.0
 structlog>=24.0.0
 numpy>=1.26.0
+# ── API server ───────────────────────────────────────────────────────
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+# scikit-learn: used transitively by sentence-transformers; explicit pin for stability
+scikit-learn>=1.4.0

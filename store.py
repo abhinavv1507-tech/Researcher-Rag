@@ -2,7 +2,7 @@
 store.py — Stage 2: Storage & Indexing Engine
 
 Populates three storage layers from chunks.json:
-  1. Qdrant Cloud  — dense vectors via BAAI/bge-m3
+  1. Qdrant Cloud  — dense vectors via all-MiniLM-L6-v2
   2. BM25          — local lexical index (rank_bm25)
   3. Neo4j AuraDB  — strict-schema knowledge graph
 """
@@ -13,6 +13,7 @@ import os
 import pickle
 from pathlib import Path
 from typing import Any
+from itertools import cycle
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage  # type: ignore
@@ -25,7 +26,7 @@ from qdrant_client.models import (  # type: ignore
     VectorParams,
 )
 from rank_bm25 import BM25Okapi  # type: ignore
-from sentence_transformers import SentenceTransformer  # type: ignore
+from utils.model_cache import get_embedding_model, EMBED_MODEL_NAME
 from tenacity import retry, stop_after_attempt, wait_exponential  # type: ignore
 from tqdm import tqdm  # type: ignore
 
@@ -39,9 +40,9 @@ log = get_logger(__name__)
 CHUNKS_FILE = Path("chunks.json")
 BM25_PKL = Path("bm25_index.pkl")
 QDRANT_COLLECTION = "research_chunks"
-EMBED_MODEL = "BAAI/bge-m3"
-EMBED_DIM = 1024
-QDRANT_BATCH = 100
+EMBED_MODEL = EMBED_MODEL_NAME  # read from .env: EMBED_MODEL (default: sentence-transformers/all-MiniLM-L6-v2)
+EMBED_DIM = 384
+QDRANT_BATCH = 2
 GROQ_MODEL = "llama-3.1-8b-instant"
 
 
@@ -102,9 +103,9 @@ def _ensure_qdrant_collection(client: QdrantClient) -> None:
 
 
 def build_qdrant_store(chunks: list[dict[str, Any]]) -> None:
-    """Embed all chunks with bge-m3 and upsert into Qdrant."""
-    log.info("qdrant.start", n_chunks=len(chunks))
-    embedder = SentenceTransformer(EMBED_MODEL)
+    """Embed all chunks with the singleton embedding model and upsert into Qdrant."""
+    log.info("qdrant.start", n_chunks=len(chunks), embed_model=EMBED_MODEL)
+    embedder = get_embedding_model()  # singleton — loaded once, reused here
     client = _get_qdrant_client()
     _ensure_qdrant_collection(client)
 
@@ -117,7 +118,7 @@ def build_qdrant_store(chunks: list[dict[str, Any]]) -> None:
         vecs = embedder.encode(batch, normalize_embeddings=True, show_progress_bar=False)
         all_embeddings.extend(vecs.tolist())
 
-    # Upsert in batches
+    # Upsert in batches with retry logic
     for i in tqdm(range(0, len(chunks), QDRANT_BATCH), desc="Upserting to Qdrant"):
         batch_chunks = chunks[i : i + QDRANT_BATCH]
         batch_vecs = all_embeddings[i : i + QDRANT_BATCH]
@@ -133,7 +134,22 @@ def build_qdrant_store(chunks: list[dict[str, Any]]) -> None:
             )
             for c, vec in zip(batch_chunks, batch_vecs)
         ]
-        client.upsert(collection_name=QDRANT_COLLECTION, points=points)
+        
+        # Retry with exponential backoff for network issues
+        retry_count = 0
+        while retry_count < 5:
+            try:
+                client.upsert(collection_name=QDRANT_COLLECTION, points=points, timeout=60)
+                break
+            except Exception as e:
+                retry_count += 1
+                if retry_count >= 5:
+                    log.error("qdrant.upsert_failed", batch=i, error=str(e))
+                    raise
+                wait_time = 2 ** retry_count
+                log.warning("qdrant.upsert_retry", batch=i, retry=retry_count, wait_seconds=wait_time)
+                import time
+                time.sleep(wait_time)
 
     log.info("qdrant.done", upserted=len(chunks))
 
@@ -187,16 +203,39 @@ def _extract_entities_llm(
     return llm_with_schema.invoke(messages)
 
 
+def _create_groq_clients() -> list[Any]:
+    """Create Groq clients from all available API keys."""
+    api_keys_str = os.environ.get("GROQ_API_KEYS", os.environ.get("GROQ_API_KEY", ""))
+    
+    if not api_keys_str:
+        raise ValueError("No GROQ_API_KEYS or GROQ_API_KEY found in environment")
+    
+    # Support both single key and multiple keys separated by comma or semicolon
+    api_keys = [key.strip() for key in api_keys_str.replace(";", ",").split(",") if key.strip()]
+    
+    if not api_keys:
+        raise ValueError("No valid GROQ API keys found")
+    
+    clients = []
+    for api_key in api_keys:
+        client = ChatGroq(
+            model=GROQ_MODEL,
+            temperature=0.0,
+            api_key=api_key,
+        )
+        clients.append(client.with_structured_output(PaperEntities))
+    
+    log.info("groq.clients_created", count=len(clients))
+    return clients
+
+
 def build_neo4j_store(chunks: list[dict[str, Any]], paper_texts: dict[str, str]) -> None:
     """Extract entities from each paper and write to Neo4j with strict schema."""
     log.info("neo4j.start")
 
-    llm = ChatGroq(
-        model=GROQ_MODEL,
-        temperature=0.0,
-        api_key=os.environ["GROQ_API_KEY"],
-    )
-    llm_structured = llm.with_structured_output(PaperEntities)
+    # Create multiple clients and setup round-robin
+    llm_clients = _create_groq_clients()
+    llm_cycle = cycle(llm_clients)
 
     # Deduplicate: one extraction per paper
     seen_papers: set[str] = set()
@@ -225,21 +264,27 @@ def build_neo4j_store(chunks: list[dict[str, Any]], paper_texts: dict[str, str])
             "sample_text": paper_texts.get(arxiv_id, chunk.get("chunk_text", "")),
         }
 
+        # Get next client from round-robin cycle
+        current_llm = next(llm_cycle)
+
         try:
-            entities: PaperEntities = _extract_entities_llm(llm_structured, paper_info)
+            entities: PaperEntities = _extract_entities_llm(current_llm, paper_info)
             neo4j.write_entities_from_extraction(
                 arxiv_id=arxiv_id,
                 title=chunk.get("title", ""),
                 year=year,
-                entities=entities.dict(),
+                entities=entities.model_dump(),
             )
         except Exception as e:
             log.warning("neo4j.extraction_failed", arxiv_id=arxiv_id, error=str(e))
             # Still upsert the paper node
-            neo4j.upsert_paper(arxiv_id, chunk.get("title", ""), year)
+            try:
+                neo4j.upsert_paper(arxiv_id, chunk.get("title", ""), year)
+            except Exception as neo4j_err:
+                log.warning("neo4j.upsert_paper_failed", arxiv_id=arxiv_id, error=str(neo4j_err))
 
     neo4j.close()
-    log.info("neo4j.done", papers=len(paper_chunk_map))
+    log.info("neo4j.done", papers=len(paper_chunk_map), llm_clients=len(llm_clients))
 
 
 # ---------------------------------------------------------------------------

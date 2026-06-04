@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RAG Research Agent</title>
+  <meta name="description" content="Advanced AI research assistant powered by LangGraph, Qdrant, BM25, Neo4j graph traversal, and Gemini 2.5 Flash synthesis." />
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔬</text></svg>" />
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ── Header ─────────────────────────────────────────────────── -->
+  <header class="header">
+    <div class="header-badge">
+      <span class="dot"></span>
+      Advanced RAG · Research Agent
+    </div>
+
+    <h1>Ask Anything About&nbsp;AI&nbsp;Research</h1>
+
+    <p>
+      Multi-stage retrieval pipeline with dense + lexical search,
+      graph-aware escalation, and Gemini 2.5 Flash synthesis.
+    </p>
+
+    <!-- Pipeline mini-map -->
+    <div class="pipeline-row" id="pipeline-pills">
+      <span class="pill" data-stage="decomposer">🧩 Decomposer</span>
+      <span class="pill-arrow">›</span>
+      <span class="pill" data-stage="retrieval">⚡ Dense + BM25</span>
+      <span class="pill-arrow">›</span>
+      <span class="pill" data-stage="reranker">📊 Reranker</span>
+      <span class="pill-arrow">›</span>
+      <span class="pill" data-stage="grader">🧪 Grader</span>
+      <span class="pill-arrow">›</span>
+      <span class="pill" data-stage="synthesis">✨ Gemini</span>
+      <span class="pill-arrow">›</span>
+      <span class="pill" data-stage="verifier">✅ Verifier</span>
+    </div>
+  </header>
+
+  <!-- ── Search ─────────────────────────────────────────────────── -->
+  <div class="search-card" id="search-card">
+    <div class="search-inner">
+      <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <textarea
+        id="query-input"
+        placeholder="What methods do LLM agents use for tool selection? …"
+        maxlength="1000"
+        rows="1"
+        aria-label="Research query"
+        autocomplete="off"
+        spellcheck="true"
+      ></textarea>
+    </div>
+    <div class="search-actions">
+      <span class="char-count" id="char-count">0 / 1000</span>
+      <button class="search-btn" id="submit-btn" type="button" aria-label="Run query">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="5 3 19 12 5 21 5 3"/>
+        </svg>
+        Run Query
+      </button>
+    </div>
+  </div>
+
+  <!-- Example queries -->
+  <div class="examples">
+    <span class="examples-label">Try:</span>
+    <span class="example-chip" tabindex="0" role="button">ReAct vs Reflexion for multi-step reasoning</span>
+    <span class="example-chip" tabindex="0" role="button">How do RAG systems handle context window limits?</span>
+    <span class="example-chip" tabindex="0" role="button">Chain-of-thought prompting for code generation</span>
+  </div>
+
+  <!-- ── Progress ─────────────────────────────────────────────── -->
+  <section id="progress-section" aria-live="polite">
+    <div class="progress-card">
+      <div class="progress-header">
+        <div class="spinner" id="spinner"></div>
+        <div>
+          <div class="progress-title" id="progress-title">Running pipeline…</div>
+          <div class="progress-subtitle" id="progress-subtitle">This may take 15–60 seconds</div>
+        </div>
+      </div>
+
+      <div class="stages-list" id="stages-list">
+        <div class="stage-item" id="stage-decomposer" data-stage="decomposer">
+          <span class="stage-icon">🧩</span>
+          <span>Decomposing query into sub-queries</span>
+        </div>
+        <div class="stage-item" id="stage-retrieval" data-stage="retrieval">
+          <span class="stage-icon">⚡</span>
+          <span>Dense + lexical retrieval in parallel</span>
+        </div>
+        <div class="stage-item" id="stage-reranker" data-stage="reranker">
+          <span class="stage-icon">📊</span>
+          <span>Re-ranking retrieved chunks</span>
+        </div>
+        <div class="stage-item" id="stage-grader" data-stage="grader">
+          <span class="stage-icon">🧪</span>
+          <span>Grading chunk quality (Self-RAG)</span>
+        </div>
+        <div class="stage-item" id="stage-synthesis" data-stage="synthesis">
+          <span class="stage-icon">✨</span>
+          <span>Synthesising answer with Gemini 2.5 Flash</span>
+        </div>
+        <div class="stage-item" id="stage-verifier" data-stage="verifier">
+          <span class="stage-icon">✅</span>
+          <span>Verifying citations</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Error ──────────────────────────────────────────────────── -->
+  <section id="error-section" aria-live="assertive">
+    <div class="error-card">
+      <span class="error-icon">⚠️</span>
+      <div>
+        <div class="error-title">Pipeline Error</div>
+        <div class="error-message" id="error-message"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Result ─────────────────────────────────────────────────── -->
+  <section id="result-section" aria-live="polite">
+    <div class="result-card">
+
+      <!-- Header -->
+      <div class="result-header">
+        <div>
+          <div class="result-query-label">Research Question</div>
+          <div class="result-query-text" id="result-query"></div>
+        </div>
+        <div class="result-meta-chips" id="result-meta"></div>
+      </div>
+
+      <!-- Answer -->
+      <div class="answer-body" id="answer-body"></div>
+
+      <!-- Citations -->
+      <div class="citations-section" id="citations-section" style="display:none">
+        <div class="citations-title">📚 Verified Citations</div>
+        <div class="citations-grid" id="citations-grid"></div>
+      </div>
+
+      <!-- Sub-queries -->
+      <div class="subqueries-section" id="subqueries-section" style="display:none">
+        <div class="subqueries-title" id="sq-toggle" tabindex="0" role="button" aria-expanded="false">
+          🔍 Sub-queries executed
+          <span class="sq-count" id="sq-count"></span>
+          <span class="toggle" style="margin-left:auto">›</span>
+        </div>
+        <div class="subqueries-list" id="subqueries-list"></div>
+      </div>
+
+      <!-- Stats -->
+      <div class="stats-footer" id="stats-footer"></div>
+    </div>
+  </section>
+
+</div><!-- /#app -->
+
+<script>
+/* ===================================================================
+   RAG Research Agent — frontend logic
+   =================================================================== */
+
+const queryInput   = document.getElementById('query-input');
+const submitBtn    = document.getElementById('submit-btn');
+const charCount    = document.getElementById('char-count');
+const progressSec  = document.getElementById('progress-section');
+const resultSec    = document.getElementById('result-section');
+const errorSec     = document.getElementById('error-section');
+const errorMsg     = document.getElementById('error-message');
+const answerBody   = document.getElementById('answer-body');
+const resultQuery  = document.getElementById('result-query');
+const resultMeta   = document.getElementById('result-meta');
+const citationsSec = document.getElementById('citations-section');
+const citationsGrid= document.getElementById('citations-grid');
+const sqSection    = document.getElementById('subqueries-section');
+const sqList       = document.getElementById('subqueries-list');
+const sqToggle     = document.getElementById('sq-toggle');
+const sqCount      = document.getElementById('sq-count');
+const statsFooter  = document.getElementById('stats-footer');
+const progressTitle= document.getElementById('progress-title');
+const pillsRow     = document.getElementById('pipeline-pills');
+
+// ── Auto-resize textarea ────────────────────────────────────────────
+queryInput.addEventListener('input', () => {
+  queryInput.style.height = 'auto';
+  queryInput.style.height = queryInput.scrollHeight + 'px';
+  charCount.textContent = `${queryInput.value.length} / 1000`;
+});
+
+// Submit on Ctrl+Enter / Cmd+Enter
+queryInput.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') runQuery();
+});
+
+submitBtn.addEventListener('click', runQuery);
+
+// ── Example chips ───────────────────────────────────────────────────
+document.querySelectorAll('.example-chip').forEach(chip => {
+  const activate = () => {
+    queryInput.value = chip.textContent.trim();
+    queryInput.dispatchEvent(new Event('input'));
+    queryInput.focus();
+  };
+  chip.addEventListener('click', activate);
+  chip.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') activate(); });
+});
+
+// ── Sub-queries accordion ────────────────────────────────────────────
+const toggleSubqueries = () => {
+  const isOpen = sqList.classList.toggle('open');
+  sqToggle.classList.toggle('open', isOpen);
+  sqToggle.setAttribute('aria-expanded', String(isOpen));
+};
+sqToggle.addEventListener('click', toggleSubqueries);
+sqToggle.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') toggleSubqueries(); });
+
+// ── Pipeline pill activation ─────────────────────────────────────────
+const STAGE_MAP = {
+  starting:    null,
+  decomposer:  'decomposer',
+  retrieval:   'retrieval',
+  reranker:    'reranker',
+  grader:      'grader',
+  synthesis:   'synthesis',
+  verifier:    'verifier',
+  done:        null,
+};
+
+const COMPLETED_STAGES = [];
+
+function setActivePill(stage) {
+  document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
+  if (stage) {
+    const pill = pillsRow.querySelector(`[data-stage="${stage}"]`);
+    if (pill) pill.classList.add('active');
+  }
+}
+
+// ── Stage progress items ─────────────────────────────────────────────
+const STAGE_ORDER = ['decomposer','retrieval','reranker','grader','synthesis','verifier'];
+let activeStageIndex = -1;
+
+function advanceStage(stageName) {
+  const idx = STAGE_ORDER.indexOf(stageName);
+  if (idx < 0) return;
+
+  // Mark all previous stages done
+  for (let i = 0; i < idx; i++) {
+    const el = document.getElementById(`stage-${STAGE_ORDER[i]}`);
+    if (el) { el.classList.remove('active'); el.classList.add('done'); removeDot(el); }
+  }
+
+  // Mark current active
+  const el = document.getElementById(`stage-${stageName}`);
+  if (el) {
+    el.classList.add('active');
+    el.classList.remove('done');
+    let dot = el.querySelector('.stage-active-dot');
+    if (!dot) { dot = document.createElement('span'); dot.className = 'stage-active-dot'; el.appendChild(dot); }
+  }
+
+  setActivePill(stageName);
+  activeStageIndex = idx;
+}
+
+function markAllDone() {
+  STAGE_ORDER.forEach(s => {
+    const el = document.getElementById(`stage-${s}`);
+    if (el) { el.classList.remove('active'); el.classList.add('done'); removeDot(el); }
+  });
+  document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
+}
+
+function removeDot(el) {
+  const dot = el.querySelector('.stage-active-dot');
+  if (dot) dot.remove();
+}
+
+function resetStages() {
+  STAGE_ORDER.forEach(s => {
+    const el = document.getElementById(`stage-${s}`);
+    if (el) { el.classList.remove('active', 'done'); removeDot(el); }
+  });
+  document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
+  activeStageIndex = -1;
+}
+
+// ── UI state helpers ─────────────────────────────────────────────────
+function showSection(el) { el.style.display = ''; el.style.display = 'block'; }
+function hideSection(el) { el.style.display = 'none'; }
+
+function setLoading(on) {
+  submitBtn.disabled = on;
+  submitBtn.innerHTML = on
+    ? `<svg class="spin-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/><path d="M12 6v6l4 2"/></svg> Running…`
+    : `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run Query`;
+}
+
+// ── Render helpers ───────────────────────────────────────────────────
+
+/**
+ * Convert plain answer text to HTML:
+ * - Linkify [arXiv:XXXX.XXXXX] → styled citation spans
+ * - Basic markdown: **bold**, *italic*, `code`
+ * - Paragraphs
+ */
+function renderAnswer(text) {
+  // Escape HTML first
+  let html = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  // Bold / italic / code
+  html = html
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // arXiv citations → clickable spans
+  html = html.replace(
+    /\[arXiv:(\d{4}\.\d{4,5})\]/g,
+    (_, id) => `<a class="citation" href="https://arxiv.org/abs/${id}" target="_blank" rel="noopener" title="Open arXiv:${id}">[arXiv:${id}]</a>`
+  );
+
+  // Headings (## or ###)
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm,  '<h2>$1</h2>');
+
+  // Paragraphs: split on double newlines
+  const blocks = html.split(/\n{2,}/);
+  html = blocks.map(b => {
+    b = b.trim();
+    if (!b) return '';
+    if (b.startsWith('<h2>') || b.startsWith('<h3>')) return b;
+    // Single-line items
+    return `<p>${b.replace(/\n/g, '<br>')}</p>`;
+  }).filter(Boolean).join('\n');
+
+  return html;
+}
+
+function buildMetaChips(data) {
+  const chips = [];
+
+  chips.push(`
+    <span class="meta-chip">
+      <span class="icon">📦</span>
+      ${data.chunks_used} chunks
+    </span>`);
+
+  chips.push(`
+    <span class="meta-chip">
+      <span class="icon">⏱</span>
+      ${data.elapsed_seconds}s
+    </span>`);
+
+  if (data.escalated) {
+    chips.push(`
+      <span class="meta-chip escalated">
+        <span class="icon">🕸</span>
+        Graph escalated
+      </span>`);
+  }
+
+  if (data.graph_context_items > 0) {
+    chips.push(`
+      <span class="meta-chip">
+        <span class="icon">🔗</span>
+        ${data.graph_context_items} graph nodes
+      </span>`);
+  }
+
+  return chips.join('');
+}
+
+function buildCitations(citations) {
+  if (!citations || !citations.length) return;
+  showSection(citationsSec);
+  citationsGrid.innerHTML = citations.map(id => `
+    <a class="citation-tag"
+       href="https://arxiv.org/abs/${id}"
+       target="_blank" rel="noopener"
+       title="Open arXiv:${id} on arxiv.org">
+      📄 arXiv:${id}
+    </a>
+  `).join('');
+}
+
+function buildSubqueries(subQueries) {
+  if (!subQueries || !subQueries.length) return;
+  showSection(sqSection);
+  sqCount.textContent = `(${subQueries.length})`;
+  sqList.innerHTML = subQueries.map(sq => `
+    <div class="subquery-item">
+      <span class="subquery-badge ${sq.tool === 'dense_search' ? 'dense' : 'lexical'}">
+        ${sq.tool === 'dense_search' ? '⚡ Dense' : '🔤 Lexical'}
+      </span>
+      <span class="subquery-text">${escHtml(sq.query)}</span>
+    </div>
+  `).join('');
+}
+
+function buildStats(data) {
+  statsFooter.innerHTML = `
+    <span class="stat">🔍 <span class="stat-value">${data.sub_queries.length}</span>&nbsp;sub-queries</span>
+    <span class="stat">📄 <span class="stat-value">${data.chunks_used}</span>&nbsp;chunks used</span>
+    <span class="stat">📚 <span class="stat-value">${data.citations.length}</span>&nbsp;citations verified</span>
+    <span class="stat">⏱ <span class="stat-value">${data.elapsed_seconds}s</span>&nbsp;elapsed</span>
+    ${data.escalated ? '<span class="stat">🕸 Graph escalation triggered</span>' : ''}
+  `;
+}
+
+function escHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderResult(data) {
+  resultQuery.textContent = data.query;
+  resultMeta.innerHTML = buildMetaChips(data);
+  answerBody.innerHTML = renderAnswer(data.answer);
+
+  hideSection(citationsSec);
+  hideSection(sqSection);
+  sqList.classList.remove('open');
+  sqToggle.classList.remove('open');
+
+  buildCitations(data.citations);
+  buildSubqueries(data.sub_queries);
+  buildStats(data);
+
+  showSection(resultSec);
+  resultSec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ── Main query runner ────────────────────────────────────────────────
+async function runQuery() {
+  const query = queryInput.value.trim();
+  if (!query) { queryInput.focus(); return; }
+
+  // Reset UI
+  hideSection(resultSec);
+  hideSection(errorSec);
+  showSection(progressSec);
+  resetStages();
+  setLoading(true);
+  progressTitle.textContent = 'Running pipeline…';
+
+  progressSec.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  try {
+    await streamQuery(query);
+  } catch (err) {
+    showError(err.message || String(err));
+  } finally {
+    setLoading(false);
+  }
+}
+
+// ── SSE streaming query ──────────────────────────────────────────────
+async function streamQuery(query) {
+  const resp = await fetch('/query/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query }),
+  });
+
+  if (!resp.ok) {
+    const detail = await resp.json().catch(() => ({}));
+    throw new Error(detail.detail || `HTTP ${resp.status}`);
+  }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    // Parse SSE chunks
+    const parts = buffer.split('\n\n');
+    buffer = parts.pop(); // keep incomplete last chunk
+
+    for (const part of parts) {
+      if (!part.trim()) continue;
+
+      let eventType = 'message';
+      let dataStr = '';
+
+      for (const line of part.split('\n')) {
+        if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+        if (line.startsWith('data: '))  dataStr   = line.slice(6).trim();
+      }
+
+      if (!dataStr) continue;
+      let payload;
+      try { payload = JSON.parse(dataStr); } catch { continue; }
+
+      handleSSEEvent(eventType, payload);
+    }
+  }
+}
+
+function handleSSEEvent(event, payload) {
+  if (event === 'status') {
+    const stage = STAGE_MAP[payload.stage];
+    if (stage) advanceStage(stage);
+    progressTitle.textContent = payload.message || 'Processing…';
+    if (payload.stage === 'done') { markAllDone(); hideSection(progressSec); }
+  }
+
+  if (event === 'result') {
+    hideSection(progressSec);
+    renderResult(payload);
+  }
+
+  if (event === 'error') {
+    hideSection(progressSec);
+    showError(payload.message || 'Unknown error');
+  }
+}
+
+function showError(msg) {
+  errorMsg.textContent = msg;
+  showSection(errorSec);
+  errorSec.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+</script>
+
+</body>
+</html>

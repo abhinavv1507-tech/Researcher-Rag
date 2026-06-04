@@ -14,3 +14,14 @@ htmlcov/
 .idea/
 .vscode/
 *.log
+chunks.json
+pdfs/
+__pycache__/
+.venv/
+qdrant_storage/
+*.log
+chunks.json
+pdfs/
+__pycache__/
+.venv/
+qdrant_storage/

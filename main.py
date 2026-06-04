@@ -46,7 +46,12 @@ def main() -> None:
     log.info("main.start", query=args.query)
 
     try:
-        from graph import run_query
+        # Warmup models before first query to eliminate cold-start latency
+        log.info("main.warmup_start")
+        from graph import warm_models, run_query
+        warm_models()
+        log.info("main.warmup_done")
+        
         state = run_query(args.query)
     except Exception as e:
         log.error("main.failed", error=str(e))

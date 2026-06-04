@@ -1,0 +1,2 @@
+usage: main.py [-h] --query QUERY [--verbose]
+main.py: error: unrecognized arguments: are attention mechanisms?
